@@ -1,104 +1,95 @@
 ---
 name: ielts-study-coach
-description: Use this skill when the user asks for IELTS study coaching, including 今日任务, 帮我规划雅思, 批改作文, 开始口语练习, 阅读精读, 听力复盘, or 本周复盘. The skill reads and updates the local IELTS Study Dashboard JSON files under data/.
+description: Use this skill when the user asks for IELTS study coaching, including 今日任务, 帮我规划雅思, 批改作文, 开始口语练习, 阅读精读, 听力复盘, or 本周复盘. The skill updates the local IELTS Study Dashboard SQLite database through the local API.
 ---
 
 # IELTS Study Coach
 
 This skill supports the local IELTS Study Dashboard. Use it for IELTS planning, practice, review, and dashboard data maintenance.
 
-## Data files
+## Data source
 
-Read current state from:
+Runtime data lives in SQLite:
 
-- `data/profile.json` for learner profile, target score, exam date, and focus areas.
-- `data/dashboard.json` for latest mock score, dashboard advice, counters, and vocabulary progress.
-- `data/tasks.json` for today's tasks and weekly goal.
-- `data/writing.json` for writing submissions and feedback.
-- `data/reading.json` for reading practice and intensive reading records.
-- `data/listening.json` for listening review records.
-- `data/speaking.json` for speaking practice records.
+- Database: `data/ielts-study.db`
+- Local API: `server/index.js`
+- JSON files in `data/*.json` are seed data and human-readable backup, not the primary runtime store after migration.
 
-Always preserve valid JSON formatting. When adding records, append a new object with a stable id prefix:
+Prefer updating data through the local API endpoints instead of editing the database manually:
 
-- writing: `w-###`
-- reading: `r-###`
-- listening: `l-###`
-- speaking: `s-###`
-- tasks: `task-###`
+- `GET /api/dashboard`
+- `PATCH /api/tasks/:id`
+- `POST /api/writing`
+- `POST /api/reading`
+- `POST /api/listening`
+- `POST /api/speaking`
+- `POST /api/vocabulary`
 
 Use the current date when the user does not provide one.
 
-## Required update rule
+## Required Update Rule
 
-After completing a coaching task, update the relevant `data/*.json` files unless the user explicitly asks for advice only.
+After completing a coaching task, update SQLite through the relevant API unless the user explicitly asks for advice only.
 
-- For daily planning, update `data/tasks.json` and refresh `dashboard.todayAdvice`.
-- For IELTS planning, update `profile.focusAreas`, `tasks.weeklyGoal`, `tasks.today`, and dashboard advice.
-- For essay correction, append to `data/writing.json.records` and increment `dashboard.stats.writingRecords`.
-- For speaking practice, append to `data/speaking.json.records`.
-- For intensive reading, append to `data/reading.json.records` and increment `dashboard.stats.readingRecords`.
-- For listening review, append to `data/listening.json.records` and increment `dashboard.stats.listeningAnalyses`.
-- For weekly review, summarize progress and update `tasks.weeklyGoal`, `profile.focusAreas`, and dashboard advice.
-
-If the user provides a score that changes the latest mock state, update `dashboard.lastMock`.
+- For essay correction, create a writing record with task, topic, band, focus, and feedback.
+- For speaking practice, create a speaking record with part, topic, band, and feedback.
+- For intensive reading, create a reading record with passage, score, question types, mistakes, and notes.
+- For listening review, create a listening record with section, score, mistake types, and review.
+- For task completion, patch the matching task done state.
+- For vocabulary progress, post learned delta, today new count, and today review count.
 
 ## Workflows
 
 ### 今日任务
 
-1. Read `profile.json`, `dashboard.json`, and `tasks.json`.
-2. Create 3 to 5 concrete tasks with estimated minutes and IELTS category.
-3. Balance tasks around weak areas and exam timeline.
-4. Update `data/tasks.json.today`.
-5. Refresh `data/dashboard.json.todayAdvice` with 2 to 4 concise suggestions.
+1. Read `GET /api/dashboard`.
+2. Review today's tasks, weak areas, and exam timeline.
+3. Give 3 to 5 concrete tasks with estimated minutes.
+4. If the user asks to mark completion, call `PATCH /api/tasks/:id`.
 
 ### 帮我规划雅思
 
 1. Ask only for missing critical facts: target score, exam date, current score, daily available time.
-2. If enough information exists in JSON, make a plan directly.
+2. If enough information exists, make a plan directly.
 3. Produce a weekly focus plan and today's first actions.
-4. Update `profile.json`, `tasks.json`, and `dashboard.json`.
+4. Do not add OpenAI integration unless the user explicitly asks for it later.
 
 ### 批改作文
 
 1. Identify Task 1 or Task 2, topic, user essay, and target band.
 2. Give concise feedback using IELTS criteria: Task Response/Achievement, Coherence and Cohesion, Lexical Resource, Grammar.
 3. Provide a realistic band estimate, top 3 fixes, and one rewritten sample paragraph when useful.
-4. Append a writing record to `data/writing.json.records`.
-5. Increment `data/dashboard.json.stats.writingRecords`.
+4. Save the result with `POST /api/writing`.
 
 ### 开始口语练习
 
 1. Choose Part 1, Part 2, or Part 3 based on the user's need.
 2. Ask one prompt at a time and wait for the user's answer.
 3. After the answer, give feedback on fluency, vocabulary, grammar, pronunciation risks, and band estimate.
-4. Append a speaking record to `data/speaking.json.records`.
+4. Save the result with `POST /api/speaking`.
 
 ### 阅读精读
 
 1. Ask for passage, score, question types, and mistakes if missing.
-2. Analyze mistake causes:定位失败, 同义替换, 句子结构, 题型策略, 词汇.
+2. Analyze mistake causes: 定位失败, 同义替换, 句子结构, 题型策略, 词汇.
 3. Create a short review plan and vocabulary/phrase list.
-4. Append a reading record to `data/reading.json.records`.
-5. Increment `data/dashboard.json.stats.readingRecords`.
+4. Save the result with `POST /api/reading`.
 
 ### 听力复盘
 
 1. Ask for section, score, transcript/audio notes, and mistakes if missing.
-2. Classify errors:同义替换, 干扰项, 拼写, 复数, 数字, 地图方向, 语速跟丢.
+2. Classify errors: 同义替换, 干扰项, 拼写, 复数, 数字, 地图方向, 语速跟丢.
 3. Produce a targeted drill and replay plan.
-4. Append a listening record to `data/listening.json.records`.
-5. Increment `data/dashboard.json.stats.listeningAnalyses`.
+4. Save the result with `POST /api/listening`.
 
 ### 本周复盘
 
-1. Read all JSON files under `data/`.
+1. Read `GET /api/dashboard`.
 2. Summarize completed practice by category.
 3. Identify the top 2 weaknesses and top 2 improvements.
-4. Set next week's focus areas.
-5. Update `profile.focusAreas`, `tasks.weeklyGoal`, and `dashboard.todayAdvice`.
+4. Set next week's focus areas in the response.
+5. Do not change schema or add external AI services during review.
 
-## Response style
+## Response Style
 
-Keep coaching direct, practical, and measurable. Prefer tables or short bullets for plans. Always mention which JSON files were updated.
+Keep coaching direct, practical, and measurable. Prefer tables or short bullets for plans. Always mention which local API endpoint or data area was updated.

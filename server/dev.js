@@ -7,7 +7,9 @@ const rootDir = path.resolve(path.dirname(__filename), '..');
 
 const commands = [
   { name: 'api', command: process.execPath, args: ['server/index.js'], shell: false },
-  { name: 'vite', command: process.platform === 'win32' ? 'npm.cmd' : 'npm', args: ['run', 'dev'], shell: process.platform === 'win32' },
+  process.platform === 'win32'
+    ? { name: 'vite', command: 'cmd.exe', args: ['/d', '/s', '/c', 'npm.cmd', 'run', 'dev'], shell: false }
+    : { name: 'vite', command: 'npm', args: ['run', 'dev'], shell: false },
 ];
 
 const children = commands.map(({ name, command, args, shell }) => {
