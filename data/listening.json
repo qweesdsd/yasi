@@ -1,0 +1,28 @@
+{
+  "targetBand": 7,
+  "records": [
+    {
+      "id": "l-001",
+      "date": "2026-05-08",
+      "section": "Section 3",
+      "score": "7/10",
+      "mistakes": [
+        "同义替换",
+        "干扰项",
+        "拼写"
+      ],
+      "review": "记录 lecture / seminar / assessment 等学术场景词。"
+    },
+    {
+      "id": "l-002",
+      "date": "2026-05-05",
+      "section": "Section 2",
+      "score": "8/10",
+      "mistakes": [
+        "地图方向",
+        "复数"
+      ],
+      "review": "地图题先标注起点、左右、建筑物参照。"
+    }
+  ]
+}

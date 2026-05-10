@@ -1,0 +1,29 @@
+{
+  "targetBand": 7,
+  "records": [
+    {
+      "id": "r-001",
+      "date": "2026-05-07",
+      "passage": "Urban Farming",
+      "score": "27/40",
+      "questionTypes": [
+        "True/False/Not Given",
+        "Matching Headings"
+      ],
+      "mistakes": 8,
+      "notes": "Heading 题需要先看段落首尾句，再看转折句。"
+    },
+    {
+      "id": "r-002",
+      "date": "2026-05-02",
+      "passage": "Ancient Navigation",
+      "score": "25/40",
+      "questionTypes": [
+        "Multiple Choice",
+        "Summary Completion"
+      ],
+      "mistakes": 10,
+      "notes": "Summary Completion 对词性判断不够稳定。"
+    }
+  ]
+}

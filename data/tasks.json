@@ -1,0 +1,33 @@
+{
+  "today": [
+    {
+      "id": "task-001",
+      "title": "Task 2 观点类作文大纲",
+      "type": "writing",
+      "estimatedMinutes": 35,
+      "done": false
+    },
+    {
+      "id": "task-002",
+      "title": "阅读精读：定位词和替换词整理",
+      "type": "reading",
+      "estimatedMinutes": 40,
+      "done": false
+    },
+    {
+      "id": "task-003",
+      "title": "听力 Section 3 错题复盘",
+      "type": "listening",
+      "estimatedMinutes": 30,
+      "done": false
+    },
+    {
+      "id": "task-004",
+      "title": "口语 Part 2 计时练习",
+      "type": "speaking",
+      "estimatedMinutes": 15,
+      "done": false
+    }
+  ],
+  "weeklyGoal": "稳定 6.5，写作和阅读优先补短板，同时保持口语计时输出。"
+}

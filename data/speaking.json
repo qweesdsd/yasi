@@ -1,0 +1,18 @@
+{
+  "targetBand": 7,
+  "records": [
+    {
+      "id": "s-001",
+      "date": "2026-05-06",
+      "part": "Part 2",
+      "topic": "Describe a useful skill you learned.",
+      "band": 6.5,
+      "feedback": "内容完整，连接词自然度还可以提高。"
+    }
+  ],
+  "practicePrompts": [
+    "Describe a place where you like to study.",
+    "Do you prefer studying alone or with other people?",
+    "How has technology changed education?"
+  ]
+}

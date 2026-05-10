@@ -1,0 +1,13 @@
+{
+  "studentName": "IELTS Learner",
+  "targetScore": 7,
+  "examDate": "2026-08-15",
+  "currentStage": "MVP Foundation",
+  "dailyStudyMinutes": 120,
+  "focusAreas": [
+    "Writing Task 2",
+    "Reading True/False/Not Given",
+    "Listening Section 3",
+    "Speaking Part 2"
+  ]
+}

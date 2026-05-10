@@ -1,0 +1,23 @@
+{
+  "targetBand": 7,
+  "records": [
+    {
+      "id": "w-001",
+      "date": "2026-05-08",
+      "task": "Task 2",
+      "topic": "Some people believe online learning will replace schools.",
+      "band": 6,
+      "focus": "论证展开",
+      "feedback": "观点明确，但主体段例证偏泛，需要增加因果链。"
+    },
+    {
+      "id": "w-002",
+      "date": "2026-05-04",
+      "task": "Task 1",
+      "topic": "Line chart about energy consumption.",
+      "band": 6.5,
+      "focus": "数据概括",
+      "feedback": "趋势表达清晰，注意减少重复句式。"
+    }
+  ]
+}

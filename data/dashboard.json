@@ -1,0 +1,28 @@
+{
+  "lastMock": {
+    "date": "2026-05-08",
+    "overall": 6.25,
+    "listening": 6.5,
+    "reading": 6,
+    "writing": 6,
+    "speaking": 6.5
+  },
+  "todayAdvice": [
+    "完成 1 篇 Task 2 大纲和主体段改写。",
+    "复盘 1 套 Section 3 错题，标记同义替换。",
+    "精读 1 篇阅读文章，整理 8 个定位词。",
+    "完成 1 轮 Part 2 口语计时练习，录音后复盘流利度。"
+  ],
+  "stats": {
+    "writingRecords": 2,
+    "readingRecords": 2,
+    "listeningAnalyses": 2,
+    "vocabularyProgress": 42
+  },
+  "vocabulary": {
+    "learned": 1260,
+    "target": 3000,
+    "todayNew": 30,
+    "todayReview": 80
+  }
+}
