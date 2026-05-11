@@ -20,13 +20,16 @@ import {
   createSpeakingRecord,
   createWritingRecord,
   getDashboard,
+  getDailyReview,
   updateTask,
   updateVocabulary,
 } from './api.js';
+import PracticeCenterPage from './PracticeCenterPage.jsx';
 
 const navItems = [
   { id: 'home', label: '首页', icon: Home },
   { id: 'trend', label: '趋势', icon: TrendingUp },
+  { id: 'practice', label: '题目生成', icon: Sparkles },
   { id: 'writing', label: '写作', icon: PenLine },
   { id: 'reading', label: '阅读', icon: BookOpen },
   { id: 'listening', label: '听力', icon: Headphones },
@@ -80,6 +83,7 @@ function App() {
           </header>
           <div className="px-5 py-6 md:px-8">
             {active === 'home' && <Dashboard data={data} onChange={setData} />}
+            {active === 'practice' && <PracticeCenterPage />}
             {active === 'writing' && <WritingPage data={data} onChange={setData} />}
             {active === 'reading' && <ReadingPage data={data} onChange={setData} />}
             {active === 'listening' && <ListeningPage data={data} onChange={setData} />}
@@ -165,6 +169,7 @@ function NavButton({ item, active, onClick }) {
 
 function Dashboard({ data, onChange }) {
   const [busyTask, setBusyTask] = useState('');
+  const [dailyReview, setDailyReview] = useState(null);
   const examDays = useMemo(() => daysUntil(data.profile.examDate), [data.profile.examDate]);
   const goalGap = formatScoreDelta(data.profile.targetScore, data.lastMock.overall);
   const scores = [
@@ -173,6 +178,20 @@ function Dashboard({ data, onChange }) {
     ['写作', data.lastMock.writing],
     ['口语', data.lastMock.speaking],
   ];
+
+  useEffect(() => {
+    let cancelled = false;
+    getDailyReview()
+      .then((result) => {
+        if (!cancelled) setDailyReview(result.review);
+      })
+      .catch(() => {
+        if (!cancelled) setDailyReview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function toggleTask(task) {
     setBusyTask(task.id);
@@ -222,6 +241,8 @@ function Dashboard({ data, onChange }) {
         <MetricCard label="听力分析次数" value={data.stats.listeningAnalyses} />
         <ProgressCard label="背词进度" value={`${data.stats.vocabularyProgress}%`} percent={data.stats.vocabularyProgress} />
       </div>
+
+      <DailyReviewSummaryCard review={dailyReview} />
 
       <div className="card">
         <div className="flex items-center justify-between gap-4">
@@ -557,6 +578,57 @@ function ProgressCard({ label, value, percent }) {
       <div className="mt-4 h-2 rounded-full bg-slate-100">
         <div className="h-2 rounded-full bg-slate-900" style={{ width: `${percent}%` }} />
       </div>
+    </div>
+  );
+}
+
+function DailyReviewSummaryCard({ review }) {
+  const hasReview = Boolean(review && review.practiceCount > 0);
+  const tomorrowTasks = review?.tomorrowTasks ?? [];
+
+  return (
+    <div className="card">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="caption">Daily Review</p>
+          <h2 className="section-title">今日学习报告</h2>
+          <p className="mt-3 text-sm leading-6 text-slate-700">
+            {hasReview ? review.summary : '完成练习后生成今日复盘'}
+          </p>
+        </div>
+        <div className="grid min-w-[220px] grid-cols-2 gap-3">
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="caption">今日练习次数</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">{review?.practiceCount ?? 0}</div>
+          </div>
+          <div className="rounded-lg bg-slate-50 p-3">
+            <div className="caption">今日平均分</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-950">
+              {review?.averageBandScore == null ? '-' : review.averageBandScore.toFixed(1)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {hasReview && (
+        <div className="mt-4">
+          <div className="caption">明日任务</div>
+          {tomorrowTasks.length ? (
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              {tomorrowTasks.map((task) => (
+                <div key={`${task.type}-${task.title}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-sm font-medium text-slate-900">{task.title}</div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {task.type} · {task.estimatedMinutes} 分钟
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-slate-500">暂无明日任务计划</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

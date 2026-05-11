@@ -59,3 +59,54 @@ export function updateVocabulary(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function getPracticePrompts(skill) {
+  const query = skill ? `?skill=${encodeURIComponent(skill)}` : '';
+  return request(`/api/practice/prompts${query}`);
+}
+
+export function generatePracticePrompt(payload) {
+  return request('/api/practice/generate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitPracticeAttempt(promptId, payload) {
+  return request(`/api/practice/${promptId}/submit`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function submitSpeakingAudioAttempt(promptId, formData) {
+  const response = await fetch(`/api/practice/${promptId}/submit-audio`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 400 && data.error === 'audio is required.') {
+      throw new Error('请先完成录音再提交');
+    }
+    throw new Error(data.error ?? '音频提交失败');
+  }
+  return data;
+}
+
+export function getDailyReview() {
+  return request('/api/daily-review');
+}
+
+export function generateDailyReview() {
+  return request('/api/daily-review/generate', {
+    method: 'POST',
+  });
+}
+
+export function syncDailyReviewTasks() {
+  return request('/api/daily-review/sync-tasks', {
+    method: 'POST',
+  });
+}
