@@ -985,16 +985,6 @@ function SpeakingRecordingCard({ prompt, question, attempt, busy, activeRecordin
     }
   }
 
-  function playFeedback() {
-    const text = displayAttempt?.metadata?.spokenFeedbackText;
-    if (!text || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    utterance.rate = 0.95;
-    window.speechSynthesis.speak(utterance);
-  }
-
   return (
     <div className="card">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1067,23 +1057,20 @@ function SpeakingRecordingCard({ prompt, question, attempt, busy, activeRecordin
       )}
       {durationSeconds > 0 && <p className="mt-2 text-xs text-slate-500">录音时长：{durationSeconds} 秒</p>}
 
-      {displayAttempt && <SpeakingAudioFeedback attempt={displayAttempt} onPlayFeedback={playFeedback} />}
+      {displayAttempt && <SpeakingAudioFeedback attempt={displayAttempt} />}
     </div>
   );
 }
 
-function SpeakingAudioFeedback({ attempt, onPlayFeedback }) {
+function SpeakingAudioFeedback({ attempt }) {
   const metadata = attempt.metadata ?? {};
   const criteria = Object.entries(attempt.criteriaScores ?? {});
 
   return (
     <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3">
         <div className="caption">本题反馈</div>
-        <button className="secondary-button" type="button" onClick={onPlayFeedback} disabled={!metadata.spokenFeedbackText}>
-          <Play size={16} />
-          <span>播放语音反馈</span>
-        </button>
+        <SpokenFeedbackPlayer key={attempt.id} text={metadata.spokenFeedbackText ?? attempt.feedback} />
       </div>
       <div className="mt-3 space-y-3 text-sm leading-6 text-slate-700">
         <ResultBlock title="transcript 转写文本" value={metadata.transcript ?? attempt.answerText} />
@@ -1128,10 +1115,253 @@ function ResultBlock({ title, value }) {
   );
 }
 
+function SpokenFeedbackPlayer({ text }) {
+  const utteranceRef = useRef(null);
+  const progressTimerRef = useRef(null);
+  const utteranceTokenRef = useRef(0);
+  const wasPlayingBeforeSeekRef = useRef(false);
+  const [playbackStatus, setPlaybackStatus] = useState('stopped');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [seekProgress, setSeekProgress] = useState(null);
+  const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const totalSeconds = estimateSpeechSeconds(text);
+  const progress = playbackStatus === 'completed'
+    ? 100
+    : Math.min(100, Math.round((elapsedSeconds / totalSeconds) * 100));
+  const displayProgress = seekProgress ?? progress;
+  const displaySeconds = Math.round((displayProgress / 100) * totalSeconds);
+  const seeking = seekProgress != null;
+  const statusText = seeking
+    ? '正在跳转...'
+    : playbackStatus === 'playing'
+      ? '正在播放语音反馈...'
+      : playbackStatus === 'paused'
+        ? '已暂停'
+        : playbackStatus === 'completed'
+          ? '播放完成'
+          : '已停止';
+
+  useEffect(() => {
+    stopPlayback({ reset: true });
+    return cancelPlaybackOnly;
+  }, [text]);
+
+  useEffect(() => {
+    if (playbackStatus !== 'playing') {
+      clearProgressTimer();
+      return undefined;
+    }
+    progressTimerRef.current = window.setInterval(() => {
+      setElapsedSeconds((current) => {
+        const next = Math.min(totalSeconds, current + 0.5);
+        if (next >= totalSeconds) {
+          window.setTimeout(() => stopPlayback({ completed: true }), 0);
+        }
+        return next;
+      });
+    }, 500);
+    return clearProgressTimer;
+  }, [playbackStatus, totalSeconds]);
+
+  function playFeedback(restart = false) {
+    if (!speechSupported || !text) return;
+    const startSeconds = restart || playbackStatus === 'completed' ? 0 : elapsedSeconds;
+    speakFromSeconds(startSeconds);
+  }
+
+  function speakFromSeconds(startSeconds) {
+    const safeStart = Math.max(0, Math.min(totalSeconds, startSeconds));
+    if (!speechSupported || !text) return;
+    if (safeStart >= totalSeconds) {
+      stopPlayback({ completed: true });
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const token = utteranceTokenRef.current + 1;
+    utteranceTokenRef.current = token;
+    const utterance = new SpeechSynthesisUtterance(getSpeechTextFromSeconds(text, safeStart, totalSeconds));
+    utterance.lang = 'en-US';
+    utterance.rate = 0.95;
+    utterance.onend = () => {
+      if (utteranceTokenRef.current !== token) return;
+      setElapsedSeconds(totalSeconds);
+      setPlaybackStatus('completed');
+      clearProgressTimer();
+      utteranceRef.current = null;
+    };
+    utterance.onerror = (event) => {
+      if (utteranceTokenRef.current !== token) return;
+      console.error('SpeechSynthesis feedback playback error:', event);
+      setPlaybackStatus('stopped');
+      clearProgressTimer();
+      utteranceRef.current = null;
+    };
+
+    utteranceRef.current = utterance;
+    setPlaybackStatus('playing');
+    setElapsedSeconds(safeStart);
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function pauseFeedback() {
+    if (!speechSupported || playbackStatus !== 'playing') return;
+    window.speechSynthesis.pause();
+    setPlaybackStatus('paused');
+  }
+
+  function resumeFeedback() {
+    if (!speechSupported || playbackStatus !== 'paused') return;
+    if (utteranceRef.current) {
+      window.speechSynthesis.resume();
+      setPlaybackStatus('playing');
+    } else {
+      speakFromSeconds(elapsedSeconds);
+    }
+  }
+
+  function stopPlayback({ reset = false, completed = false } = {}) {
+    utteranceTokenRef.current += 1;
+    if (speechSupported) window.speechSynthesis.cancel();
+    clearProgressTimer();
+    utteranceRef.current = null;
+    setPlaybackStatus(completed ? 'completed' : reset ? 'stopped' : 'stopped');
+    setElapsedSeconds(completed ? totalSeconds : reset ? 0 : elapsedSeconds);
+  }
+
+  function cancelPlaybackOnly() {
+    utteranceTokenRef.current += 1;
+    if (speechSupported) window.speechSynthesis.cancel();
+    clearProgressTimer();
+    utteranceRef.current = null;
+  }
+
+  function handleSeekChange(event) {
+    if (!speechSupported || !text) return;
+    const nextProgress = Number(event.target.value);
+    setSeekProgress(nextProgress);
+    setElapsedSeconds(Math.round((nextProgress / 100) * totalSeconds));
+  }
+
+  function beginSeek() {
+    if (!speechSupported || !text) return;
+    wasPlayingBeforeSeekRef.current = playbackStatus === 'playing';
+
+    // SpeechSynthesis does not support true audio seeking; this estimates seek by
+    // slicing spokenFeedbackText at the same text-length percentage and replaying.
+    setSeekProgress(progress);
+    window.speechSynthesis.cancel();
+    clearProgressTimer();
+    utteranceRef.current = null;
+    setPlaybackStatus(playbackStatus === 'playing' ? 'playing' : playbackStatus);
+  }
+
+  function commitSeek(rawProgress = seekProgress) {
+    if (!speechSupported || !text || rawProgress == null) return;
+    const nextProgress = Number(rawProgress);
+    const nextSeconds = Math.round((nextProgress / 100) * totalSeconds);
+    const shouldAutoPlay = wasPlayingBeforeSeekRef.current;
+
+    setElapsedSeconds(nextProgress >= 100 ? totalSeconds : nextSeconds);
+    setSeekProgress(null);
+
+    if (nextProgress >= 100) {
+      stopPlayback({ completed: true });
+      return;
+    }
+    if (nextProgress <= 0) {
+      setElapsedSeconds(0);
+    }
+    if (shouldAutoPlay) {
+      speakFromSeconds(nextSeconds);
+    } else {
+      setPlaybackStatus(playbackStatus === 'paused' ? 'paused' : 'stopped');
+    }
+  }
+
+  function clearProgressTimer() {
+    if (progressTimerRef.current) {
+      window.clearInterval(progressTimerRef.current);
+      progressTimerRef.current = null;
+    }
+  }
+
+  if (!speechSupported) {
+    return <p className="text-sm text-amber-700">当前浏览器不支持语音播放</p>;
+  }
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-wrap gap-2">
+        <button className="secondary-button" type="button" onClick={() => playFeedback(false)} disabled={!text || playbackStatus === 'playing'}>
+          <Play size={16} />
+          <span>播放</span>
+        </button>
+        <button className="secondary-button" type="button" onClick={pauseFeedback} disabled={playbackStatus !== 'playing'}>
+          <Pause size={16} />
+          <span>暂停</span>
+        </button>
+        <button className="secondary-button" type="button" onClick={resumeFeedback} disabled={playbackStatus !== 'paused'}>
+          <Play size={16} />
+          <span>继续播放</span>
+        </button>
+        <button className="secondary-button" type="button" onClick={() => (playbackStatus === 'completed' ? playFeedback(true) : stopPlayback())} disabled={!text || playbackStatus === 'stopped'}>
+          <RotateCcw size={16} />
+          <span>{playbackStatus === 'completed' ? '重播' : '停止/重播'}</span>
+        </button>
+      </div>
+      <div className="mt-3">
+        <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+          <span>{statusText}</span>
+          <span>{formatPlaybackTime(seeking ? displaySeconds : elapsedSeconds)} / {formatPlaybackTime(totalSeconds)}</span>
+        </div>
+        <input
+          className="mt-2 h-2 w-full cursor-pointer accent-slate-900"
+          type="range"
+          min="0"
+          max="100"
+          value={displayProgress}
+          onMouseDown={beginSeek}
+          onMouseUp={() => commitSeek()}
+          onTouchStart={beginSeek}
+          onTouchEnd={() => commitSeek()}
+          onKeyDown={beginSeek}
+          onKeyUp={() => commitSeek()}
+          onChange={handleSeekChange}
+          disabled={!text}
+          aria-label="语音反馈播放进度"
+        />
+      </div>
+    </div>
+  );
+}
+
 function formatMediaError(error) {
   const name = error?.name || 'UnknownError';
   const message = error?.message || 'No error message';
   return `${name}: ${message}`;
+}
+
+function estimateSpeechSeconds(text) {
+  const words = countWords(text ?? '');
+  return Math.max(3, Math.ceil(words / 2.4));
+}
+
+function getSpeechTextFromSeconds(text, startSeconds, totalSeconds) {
+  const source = String(text ?? '').trim();
+  if (!source) return '';
+  const ratio = Math.max(0, Math.min(0.98, startSeconds / totalSeconds));
+  const rawIndex = Math.floor(source.length * ratio);
+  const previousSpace = source.lastIndexOf(' ', rawIndex);
+  const startIndex = previousSpace > 0 ? previousSpace + 1 : rawIndex;
+  return source.slice(startIndex).trim() || source;
+}
+
+function formatPlaybackTime(value) {
+  const seconds = Math.max(0, Math.round(value));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
 }
 
 function FeedbackCard({ attempt }) {
