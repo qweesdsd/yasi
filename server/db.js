@@ -1,4 +1,5 @@
 import { defaultProfileId, supabase } from './supabase.js';
+import * as deepseek from './llm/deepseek.js';
 
 export function initializeDatabase() {
   // Supabase schema and seed data are managed in the Supabase SQL Editor.
@@ -245,7 +246,7 @@ export async function submitPracticeAttempt(promptId, input) {
     throw error;
   }
 
-  const feedback = generatePracticeFeedback(prompt, answerText, input);
+  const feedback = await generatePracticeFeedback(prompt, answerText, input);
   const payload = {
     profile_id: defaultProfileId,
     prompt_id: promptId,
@@ -296,7 +297,7 @@ export async function submitPracticeAudioAttempt(promptId, input) {
     throw error;
   }
 
-  const feedback = generateSpeakingAudioFeedback({
+  const feedback = await generateSpeakingAudioFeedback({
     questionIndex: toNumber(input.questionIndex, 0),
     questionText: input.questionText || prompt.prompt_text,
     taskType: input.taskType || prompt.task_type,
@@ -347,7 +348,7 @@ export async function getDailyReview() {
 
 export async function generateDailyReview() {
   const attempts = await getTodayPracticeAttempts();
-  const review = buildDailyReview(attempts);
+  const review = await buildDailyReviewWithLlmFallback(attempts);
   const payload = {
     profile_id: defaultProfileId,
     review_date: today(),
@@ -736,8 +737,54 @@ function buildDailyReview(attempts) {
     sourceAttemptIds: attempts.map((attempt) => attempt.id),
     metadata: {
       generator: 'rule-template',
+      feedbackProvider: 'local-rule',
+      provider: 'local-rule',
       generatedAt: new Date().toISOString(),
       feedbackSamples: attempts.map((attempt) => attempt.feedback).filter(Boolean).slice(0, 3),
+    },
+  };
+}
+
+async function buildDailyReviewWithLlmFallback(attempts) {
+  const localReview = buildDailyReview(attempts);
+  const llmReview = await deepseek.generateDailyReview({
+    attempts: attempts.map((attempt) => ({
+      id: attempt.id,
+      bandScore: attempt.band_score,
+      feedback: attempt.feedback,
+      criteriaScores: attempt.criteria_scores,
+      strengths: attempt.strengths,
+      improvements: attempt.improvements,
+      metadata: attempt.metadata,
+    })),
+  });
+  if (!llmReview) {
+    return {
+      ...localReview,
+      metadata: withProviderMetadata(localReview.metadata, {
+        provider: 'local-rule',
+        evaluator: localReview.metadata?.generator ?? 'rule-template',
+      }),
+    };
+  }
+
+  return {
+    ...localReview,
+    practiceCount: toNumber(llmReview.practiceCount, localReview.practiceCount),
+    averageBandScore: llmReview.averageBandScore == null ? localReview.averageBandScore : toNumber(llmReview.averageBandScore, localReview.averageBandScore),
+    strengths: normalizeListWithFallback(llmReview.strengths, localReview.strengths),
+    weaknesses: normalizeListWithFallback(llmReview.weaknesses, localReview.weaknesses),
+    tomorrowAdvice: normalizeListWithFallback(llmReview.tomorrowAdvice, localReview.tomorrowAdvice),
+    tomorrowTasks: normalizeTaskListWithFallback(llmReview.tomorrowTasks, localReview.tomorrowTasks),
+    summary: String(llmReview.summary || localReview.summary),
+    metadata: {
+      ...localReview.metadata,
+      ...(isPlainObject(llmReview.metadata) ? llmReview.metadata : {}),
+      generator: 'deepseek',
+      fallbackGenerator: 'rule-template',
+      feedbackProvider: 'deepseek',
+      provider: 'deepseek',
+      model: deepseek.deepseekModel,
     },
   };
 }
@@ -1301,11 +1348,50 @@ function generateListeningPrompt() {
   };
 }
 
-function generatePracticeFeedback(prompt, answerText, input = {}) {
-  if (prompt.skill === 'speaking') return generateSpeakingFeedback(answerText, prompt.task_type);
-  if (prompt.skill === 'reading') return generateReadingFeedback(prompt, input.answers ?? {});
-  if (prompt.skill === 'listening') return generateListeningFeedback(prompt, input.answers ?? {});
-  return generateWritingFeedback(answerText);
+async function generatePracticeFeedback(prompt, answerText, input = {}) {
+  const localFeedback =
+    prompt.skill === 'speaking'
+      ? generateSpeakingFeedback(answerText, prompt.task_type)
+      : prompt.skill === 'reading'
+        ? generateReadingFeedback(prompt, input.answers ?? {})
+        : prompt.skill === 'listening'
+          ? generateListeningFeedback(prompt, input.answers ?? {})
+          : generateWritingFeedback(answerText);
+
+  const llmFeedback = await requestDeepSeekPracticeFeedback(prompt, answerText, input);
+  return mergeFeedbackWithFallback(llmFeedback, localFeedback);
+}
+
+async function requestDeepSeekPracticeFeedback(prompt, answerText, input) {
+  if (prompt.skill === 'speaking') {
+    return deepseek.generateSpeakingFeedback({
+      questionText: prompt.prompt_text,
+      transcript: answerText,
+      taskType: prompt.task_type,
+    });
+  }
+  if (prompt.skill === 'reading') {
+    const questions = prompt.metadata?.questions ?? [];
+    return deepseek.generateReadingFeedback({
+      passage: prompt.prompt_text,
+      questions,
+      userAnswers: questions.map((question) => input.answers?.[question.id] ?? ''),
+      correctAnswers: prompt.metadata?.answers ?? [],
+    });
+  }
+  if (prompt.skill === 'listening') {
+    const questions = prompt.metadata?.questions ?? [];
+    return deepseek.generateListeningFeedback({
+      transcript: prompt.prompt_text,
+      questions,
+      userAnswers: questions.map((question) => input.answers?.[question.id] ?? ''),
+      correctAnswers: prompt.metadata?.answers ?? [],
+    });
+  }
+  return deepseek.generateWritingFeedback({
+    prompt: prompt.prompt_text,
+    answer: answerText,
+  });
 }
 
 function generateWritingFeedback(answerText) {
@@ -1334,7 +1420,7 @@ function generateWritingFeedback(answerText) {
       paragraphs < 3 ? 'Use an introduction, two body paragraphs, and a conclusion.' : 'Use stronger topic sentences.',
     ],
     sampleAnswer: null,
-    metadata: { evaluator: 'rule-template', wordCount: words, paragraphCount: paragraphs },
+    metadata: { evaluator: 'rule-template', feedbackProvider: 'local-rule', provider: 'local-rule', wordCount: words, paragraphCount: paragraphs },
   };
 }
 
@@ -1365,11 +1451,11 @@ function generateSpeakingFeedback(answerText, taskType = 'Part 2') {
       'Record yourself later to check pauses and pronunciation.',
     ],
     sampleAnswer: null,
-    metadata: { evaluator: 'rule-template', wordCount: words, taskType },
+    metadata: { evaluator: 'rule-template', feedbackProvider: 'local-rule', provider: 'local-rule', wordCount: words, taskType },
   };
 }
 
-function generateSpeakingAudioFeedback({ questionIndex, questionText, taskType, audioPath, durationSeconds }) {
+async function generateSpeakingAudioFeedback({ questionIndex, questionText, taskType, audioPath, durationSeconds }) {
   const mockAnswers = [
     `I think ${questionText.replace(/\?$/, '').toLowerCase()} is an interesting question because it connects with my daily life. For example, I can give a personal experience and explain the reason in more detail.`,
     `My answer is that it depends on the situation. In my experience, the most important point is to explain why it matters and support the idea with a clear example.`,
@@ -1392,7 +1478,7 @@ function generateSpeakingAudioFeedback({ questionIndex, questionText, taskType, 
     },
   ];
 
-  return {
+  const localFeedback = {
     bandScore,
     transcript,
     correctedText,
@@ -1416,6 +1502,8 @@ function generateSpeakingAudioFeedback({ questionIndex, questionText, taskType, 
     ],
     metadata: {
       evaluator: 'mock-audio-template',
+      feedbackProvider: 'local-rule',
+      provider: 'local-rule',
       questionIndex,
       questionText,
       audioPath,
@@ -1426,6 +1514,37 @@ function generateSpeakingAudioFeedback({ questionIndex, questionText, taskType, 
       spokenFeedbackText,
       wordCount: words,
       taskType,
+    },
+  };
+  const llmFeedback = await deepseek.generateSpeakingFeedback({ questionText, transcript, taskType });
+  const merged = mergeFeedbackWithFallback(llmFeedback, localFeedback);
+  const corrected = String(llmFeedback?.correctedText || localFeedback.correctedText);
+  const spokenFeedback = String(llmFeedback?.spokenFeedbackText || merged.feedback || localFeedback.spokenFeedbackText);
+  const mergedSentenceCorrections = Array.isArray(llmFeedback?.sentenceCorrections)
+    ? llmFeedback.sentenceCorrections
+    : localFeedback.sentenceCorrections;
+
+  return {
+    ...merged,
+    transcript: String(llmFeedback?.transcript || localFeedback.transcript),
+    correctedText: corrected,
+    sentenceCorrections: mergedSentenceCorrections,
+    spokenFeedbackText: spokenFeedback,
+    metadata: {
+      ...localFeedback.metadata,
+      ...(isPlainObject(merged.metadata) ? merged.metadata : {}),
+      evaluator: llmFeedback ? 'deepseek' : localFeedback.metadata.evaluator,
+      feedbackProvider: llmFeedback ? 'deepseek' : 'local-rule',
+      provider: llmFeedback ? 'deepseek' : 'local-rule',
+      ...(llmFeedback ? { model: deepseek.deepseekModel } : {}),
+      questionIndex,
+      questionText,
+      audioPath,
+      durationSeconds,
+      transcript: String(llmFeedback?.transcript || localFeedback.transcript),
+      correctedText: corrected,
+      sentenceCorrections: mergedSentenceCorrections,
+      spokenFeedbackText: spokenFeedback,
     },
   };
 }
@@ -1473,6 +1592,8 @@ function generateReadingFeedback(prompt, answers) {
     sampleAnswer: null,
     metadata: {
       evaluator: 'rule-template',
+      feedbackProvider: 'local-rule',
+      provider: 'local-rule',
       correctCount,
       totalQuestions: correctAnswers.length,
       answers: userAnswers,
@@ -1528,6 +1649,8 @@ function generateListeningFeedback(prompt, answers) {
     sampleAnswer: null,
     metadata: {
       evaluator: 'rule-template',
+      feedbackProvider: 'local-rule',
+      provider: 'local-rule',
       skill: 'listening',
       correctCount,
       totalQuestions: correctAnswers.length,
@@ -1536,6 +1659,67 @@ function generateListeningFeedback(prompt, answers) {
       transcript: prompt.prompt_text,
     },
   };
+}
+
+function mergeFeedbackWithFallback(llmFeedback, fallback) {
+  if (!llmFeedback || !isPlainObject(llmFeedback)) {
+    return {
+      ...fallback,
+      metadata: withProviderMetadata(fallback.metadata, {
+        provider: 'local-rule',
+        evaluator: fallback.metadata?.evaluator ?? 'rule-template',
+      }),
+    };
+  }
+  return {
+    ...fallback,
+    bandScore: toNumber(llmFeedback.bandScore, fallback.bandScore),
+    feedback: String(llmFeedback.feedback || fallback.feedback),
+    criteriaScores: isPlainObject(llmFeedback.criteriaScores) ? llmFeedback.criteriaScores : fallback.criteriaScores,
+    strengths: normalizeListWithFallback(llmFeedback.strengths, fallback.strengths),
+    improvements: normalizeListWithFallback(llmFeedback.improvements, fallback.improvements),
+    sampleAnswer: llmFeedback.sampleAnswer ?? fallback.sampleAnswer,
+    metadata: {
+      ...(isPlainObject(fallback.metadata) ? fallback.metadata : {}),
+      ...(isPlainObject(llmFeedback.metadata) ? llmFeedback.metadata : {}),
+      evaluator: 'deepseek',
+      feedbackProvider: 'deepseek',
+      provider: 'deepseek',
+      model: deepseek.deepseekModel,
+      fallbackEvaluator: fallback.metadata?.evaluator ?? 'rule-template',
+    },
+  };
+}
+
+function withProviderMetadata(metadata, { provider, evaluator }) {
+  return {
+    ...(isPlainObject(metadata) ? metadata : {}),
+    feedbackProvider: provider,
+    provider,
+    evaluator,
+    ...(provider === 'deepseek' ? { model: deepseek.deepseekModel } : {}),
+  };
+}
+
+function normalizeListWithFallback(value, fallback) {
+  const list = normalizeList(value);
+  return list.length ? list : fallback;
+}
+
+function normalizeTaskListWithFallback(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const tasks = value
+    .map((task) => ({
+      type: String(task?.type ?? inferTaskType(task)),
+      title: String(task?.title ?? '').trim(),
+      estimatedMinutes: toNumber(task?.estimatedMinutes ?? task?.estimated_minutes, 30),
+    }))
+    .filter((task) => task.title);
+  return tasks.length ? uniqueTaskItems(tasks) : fallback;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function pick(items) {
